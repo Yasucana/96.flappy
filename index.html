@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flappy Developer — Prototype (Revised)</title>
+<style>
+:root{--cell:32px}
+body{background:#111;color:#eee;font-family:monospace;display:flex;flex-direction:column;align-items:center}
+#game{image-rendering:pixelated;margin:12px}
+canvas{background:#222;border:6px solid #333}
+.info{width:512px;display:flex;justify-content:space-between}
+.controls{font-size:13px}
+</style>
+</head>
+<body>
+<h2>Flappy Developer — Prototype (Revised)</h2>
+<div class="info"><div id="status">Level 1 • Lives:3 • Darts:0 • Score:0</div><div class="controls">Arrows: Move/Push • A: Throw • S: Guide Dart • R: Reset</div></div>
+<canvas id="c" width="512" height="320"></canvas>
+<script>
+const CELL=32, COLS=16, ROWS=10; const canvas=document.getElementById('c'); const ctx=canvas.getContext('2d');
+const T={EMPTY:0,WALL:1,BROWN:2,BLUEB:3,GOAL:4,FLAPPY:5,ENEMY:6,DART:7}
+let state={lives:3, darts:0, score:0, level:0, map:null, flappy:null, enemies:[], dartsInAir:[], guidingDart:-1}
+const pal={bg:'#222',wall:'#8d8d8d',brown:'#6b3f24',blue:'#3aa0ff',flap:'#f3d24a',enemy:'#c84e6a',dart:'#fff'}
+function makeLevel(){ // simple demo level, enhanced with gap and better layout
+ const map=Array.from({length:ROWS},()=>Array(COLS).fill(T.EMPTY));
+ for(let x=0;x<COLS;x++){map[ROWS-1][x]=T.WALL} // floor
+ // walls with gap
+ for(let x=0;x<COLS;x++){if(x<3||x>13)map[0][x]=T.WALL;} // ceiling partial
+ map[6][6]=T.WALL; map[6][7]=T.WALL; map[6][8]=T.WALL; map[5][10]=T.WALL; map[8][4]=T.WALL; // barriers
+ // boulders
+ map[7][2]=T.BROWN; map[7][3]=T.BROWN; map[5][4]=T.BROWN;
+ // blue boulder
+ map[7][1]=T.BLUEB; map[7][12]=T.GOAL;
+ // dart item
+ map[7][5]=T.DART;
+ // create a small gap for bridging
+ map[8][9]=T.EMPTY; map[8][10]=T.EMPTY; // pit in floor? Wait, floor is row 9, but simplified
+ state.flappy={x:0,y:7,dir:1};
+ state.enemies=[{x:9,y:7,dir:-1, stunned:0}]; // added stun timer
+ return map;
+}
+function draw(){ctx.clearRect(0,0,canvas.width,canvas.height); for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++){const t=state.map[r][c];const x=c*CELL,y=r*CELL; if(t===T.WALL){ctx.fillStyle=pal.wall;ctx.fillRect(x,y,CELL,CELL)}
+ else if(t===T.BROWN){ctx.fillStyle=pal.brown;ctx.fillRect(x+4,y+4,CELL-8,CELL-8)}
+ else if(t===T.BLUEB){ctx.fillStyle=pal.blue;ctx.fillRect(x+4,y+4,CELL-8,CELL-8);ctx.strokeStyle='#9fe6ff';ctx.strokeRect(x+2,y+2,CELL-4,CELL-4)}
+ else if(t===T.GOAL){ctx.fillStyle=pal.blue;ctx.fillRect(x+8,y+12,CELL-16,8); ctx.strokeStyle=pal.blue; ctx.strokeRect(x,y,CELL,CELL);}
+ else if(t===T.DART){ctx.fillStyle=pal.dart;ctx.fillRect(x+12,y+8,8,12)}
+ }
+ // flappy
+ ctx.fillStyle=pal.flap; ctx.beginPath(); ctx.ellipse(state.flappy.x*CELL+16,state.flappy.y*CELL+18,12,10,0,0,Math.PI*2); ctx.fill();
+ // enemies
+ ctx.fillStyle=pal.enemy; for(const e of state.enemies){ctx.fillRect(e.x*CELL+6,e.y*CELL+6,20,20); if(e.stunned>0){ctx.fillStyle='#666'; ctx.fillRect(e.x*CELL+8,e.y*CELL+8,16,16); ctx.fillStyle=pal.enemy;}}
+ // darts in air
+ ctx.fillStyle=pal.dart; for(const d of state.dartsInAir){ctx.fillRect(d.x*CELL+14,d.y*CELL+10,4,4); if(d.guiding){ctx.strokeStyle='#ff0'; ctx.strokeRect(d.x*CELL+12,d.y*CELL+8,8,8);}}
+ document.getElementById('status').textContent=`Level ${state.level+1} • Lives:${state.lives} • Darts:${state.darts} • Score:${state.score}`;
+}
+function inside(x,y){return x>=0&&y>=0&&x<COLS&&y<ROWS}
+function isSolid(x,y){if(!inside(x,y))return false; return state.map[y][x]===T.WALL||state.map[y][x]===T.BROWN||state.map[y][x]===T.BLUEB}
+function isOccupied(x,y){if(!inside(x,y))return false; const t=state.map[y][x]; return t===T.BROWN||t===T.BLUEB||t===T.DART}
+function applyGravity(){// objects fall if unsupported, from bottom up to avoid chain issues
+ for(let r=ROWS-2;r>=0;r--)for(let c=0;c<COLS;c++){const t=state.map[r][c]; if((t===T.BROWN||t===T.BLUEB)&& (r===ROWS-1 || state.map[r+1][c]===T.EMPTY) ){ // fall if no support below
+  if(r<ROWS-1){state.map[r+1][c]=t; state.map[r][c]=T.EMPTY; }
+  else { // fell into pit
+   if(t===T.BROWN){state.darts+=1; state.score+=10;} // bonus for fallen brown
+   state.map[r][c]=T.EMPTY;
+  }
+ }}
+ // flappy falls
+ if(state.flappy.y<ROWS-1 && !isSolid(state.flappy.x, state.flappy.y+1) && !isOccupied(state.flappy.x, state.flappy.y+1)){state.flappy.y++;}
+ if(state.flappy.y>=ROWS-1 && !isSolid(state.flappy.x, state.flappy.y)){loseLife();} // fell out
+}
+function stepEnemies(){for(const e of state.enemies){if(e.stunned>0){e.stunned--; continue;} const nx=e.x+e.dir; if(!inside(nx,e.y)||isSolid(nx,e.y)){ e.dir*=-1; } else {e.x+=e.dir;} if(Math.abs(e.x-state.flappy.x)<1 && e.y===state.flappy.y){ loseLife(); } }}
+function loseLife(){state.lives--; if(state.lives<=0){alert('Game Over'); resetGame();} else {resetLevel();}}
+function push(dx,dy){const fx=state.flappy.x, fy=state.flappy.y; const tx=fx+dx, ty=fy+dy; if(!inside(tx,ty))return false; let target=state.map[ty][tx]; if(target===T.EMPTY){return false;} // no target
+const nx=tx+dx, ny=ty+dy; const pushable=target===T.BROWN||target===T.BLUEB;
+if(pushable && (!inside(nx,ny) || isSolid(nx,ny) || isOccupied(nx,ny))){ // cannot push, check break
+ if(target===T.BROWN){state.map[ty][tx]=T.EMPTY; state.darts+=1; state.score+=50; } // break brown
+ return true; // flappy will move
+} else if(pushable && inside(nx,ny) && state.map[ny][nx]===T.EMPTY){ // push success
+ state.map[ny][nx]=target; state.map[ty][tx]=T.EMPTY;
+} else if(target===T.DART){state.darts++; state.map[ty][tx]=T.EMPTY; return true;}
+// after push or pickup, move flappy
+if(inside(tx,ty) && state.map[ty][tx]===T.EMPTY){state.flappy.x=tx; state.flappy.y=ty; state.flappy.dir=dx||-dy; return true;}
+return false;
+}
+window.addEventListener('keydown',e=>{
+ if(e.key==='ArrowLeft'){state.flappy.dir=-1; if(!push(-1,0)){if(state.flappy.x>0 && !isOccupied(state.flappy.x-1,state.flappy.y)) state.flappy.x--;}}
+ if(e.key==='ArrowRight'){state.flappy.dir=1; if(!push(1,0)){if(state.flappy.x<COLS-1 && !isOccupied(state.flappy.x+1,state.flappy.y)) state.flappy.x++;}}
+ if(e.key==='ArrowUp'){if(!push(0,-1)){if(state.flappy.y>0 && !isOccupied(state.flappy.x,state.flappy.y-1)) state.flappy.y--;}}
+ if(e.key==='ArrowDown'){if(!push(0,1)){if(state.flappy.y<ROWS-1 && !isOccupied(state.flappy.x,state.flappy.y+1)) state.flappy.y++;}}
+ if((e.key==='a' || e.key==='A') && state.darts>0){state.darts--; const ddir=state.flappy.dir>0?1:-1; state.dartsInAir.push({x:state.flappy.x+ddir*0.5,y:state.flappy.y-0.2,dx:ddir*0.6,dy:-0.15,life:60,guiding:false}); state.guidingDart=state.dartsInAir.length-1;}
+ if(e.key==='s' || e.key==='S'){if(state.guidingDart>=0 && state.dartsInAir[state.guidingDart]){state.dartsInAir[state.guidingDart].guiding=true;}} // simple guide flag
+ if(e.key==='r' || e.key==='R'){resetLevel()}
+ e.preventDefault();
+})
+function updateDarts(){for(let i=state.dartsInAir.length-1;i>=0;i--){const d=state.dartsInAir[i]; 
+ if(d.guiding && state.guidingDart===i){ // simple guide: arrow keys influence
+  if(keys['ArrowUp']) d.dy-=0.05; if(keys['ArrowDown']) d.dy+=0.05; if(keys['ArrowLeft']) d.dx-=0.05; if(keys['ArrowRight']) d.dx+=0.05;
+  if(!keys['ArrowUp']&&!keys['ArrowDown']&&!keys['ArrowLeft']&&!keys['ArrowRight']) d.guiding=false;
+ }
+ d.x+=d.dx; d.y+=d.dy; d.dy+=0.02; d.life--; // parabolic
+ // hit wall or out
+ if(!inside(Math.floor(d.x),Math.floor(d.y)) || isSolid(Math.floor(d.x),Math.floor(d.y))){state.dartsInAir.splice(i,1); continue;}
+ // check enemy hit
+ for(let j=0;j<state.enemies.length;j++){const en=state.enemies[j];if(Math.hypot(en.x-d.x, en.y-d.y)<0.6){ state.score+=100; en.stunned=180; // stun for 3 sec at 60fps, but loop 30fps so ~6sec
+  state.dartsInAir.splice(i,1); break; }}
+ if(d.life<=0) state.dartsInAir.splice(i,1);
+}}
+let keys={};
+window.addEventListener('keydown',e=>keys[e.key]=true);
+window.addEventListener('keyup',e=>keys[e.key]=false);
+function resetLevel(){state.map=makeLevel(); state.dartsInAir=[]; state.guidingDart=-1;}
+function resetGame(){state.lives=3; state.score=0; state.darts=0; state.level=0; resetLevel()}
+// game loop
+resetGame(); setInterval(()=>{applyGravity(); stepEnemies(); updateDarts(); draw(); checkWin();},1000/30);
+function checkWin(){ // fixed: check if blue boulder is on goal position
+ for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++) if(state.map[r][c]===T.BLUEB && c===12 && r===7){ // exact position
+  alert('Level Clear!'); state.level++; state.score+=1000 + state.darts*20; // unused darts bonus
+  resetLevel(); return;
+ }}
+</script>
+</body>
+</html>
